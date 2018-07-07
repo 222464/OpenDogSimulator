@@ -10,7 +10,7 @@ env.seed(0)
 ########################### Create Agent ###########################
 
 # Create hierarchy
-cs = eogmaneo.ComputeSystem(4)
+cs = eogmaneo.ComputeSystem(8)
 
 lds = []
 
@@ -35,7 +35,7 @@ inputColumnSize = 16
 
 actionWidth = 4
 actionHeight = 3
-actionColumnSize = 16
+actionColumnSize = 12
 
 h = eogmaneo.Hierarchy()
 h.create([ (inputWidth, inputHeight), (actionWidth, actionHeight) ], [ inputColumnSize, actionColumnSize ], [ False, True ], lds, 123)
@@ -44,7 +44,7 @@ h.create([ (inputWidth, inputHeight), (actionWidth, actionHeight) ], [ inputColu
 for i in range(len(lds)):
     l = h.getLayer(i)
     l._alpha = 0.01
-    l._beta = 0.0001
+    l._beta = 0.001
     l._gamma = 0.98
     l._maxRepaySamples = 32
 
@@ -52,7 +52,7 @@ actionSDR = list(h.getPredictions(1))
 
 ########################### Simulate ###########################
 
-episodeCount = 1000
+episodeCount = 5000
 reward = 0
 
 realTime = True
@@ -63,6 +63,8 @@ for i in range(episodeCount):
 	observation = env.reset()
 
 	totalReward = 0.0
+
+	t = 0
 
 	while True:
 		timeStart = time.clock()
@@ -85,12 +87,13 @@ for i in range(episodeCount):
 
 		for i in range(env.action_space.shape[0]):
 			# Exploration
-			if np.random.rand() < 0.04:
+			if np.random.rand() < 0.1:
 				actionSDR[i] = np.random.randint(0, actionColumnSize)
 			
 			# Rescale
 			action[i] = actionSDR[i] / (actionColumnSize - 1) * (env.action_space.high[i] - env.action_space.low[i]) + env.action_space.low[i]
-
+			#action[i] = np.sin(-t * 0.1)
+		
 		observation, reward, done, _ = env.step(np.array(action))
 
 		totalReward += reward
@@ -102,8 +105,10 @@ for i in range(episodeCount):
 		if realTime:
 			time.sleep(max(0.0, env.timeStep - (timeEnd - timeStart)))
 
+		t += 1
+		
 		if done:
-			print("Received " + str(totalReward) + " reward.")
+			print("Finished after " + str(t) + " timesteps. Received " + str(totalReward) + " reward.")
 			break
 
 env.close()

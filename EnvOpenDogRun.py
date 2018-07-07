@@ -20,6 +20,40 @@ from pkg_resources import parse_version
 
 logger = logging.getLogger(__name__)
 
+# Helpers
+def cross(v0, v1):
+    return [ v0[1] * v1[2] - v0[2] * v1[1],
+        v0[2] * v1[0] - v0[0] * v1[2],
+        v0[0] * v1[1] - v0[1] * v1[0] ]
+
+def rotationNormalize(q):
+    scale = 1.0 / max(0.0001, np.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]))
+
+    return [ v * scale for v in q ]
+
+def rotateVec(q, v):
+    uv = cross(q[0:3], v)
+    uuv = cross(q[0:3], uv)
+
+    scaleUv = 2.0 * q[3]
+
+    uv[0] *= scaleUv
+    uv[1] *= scaleUv
+    uv[2] *= scaleUv
+
+    uuv[0] *= 2.0
+    uuv[1] *= 2.0
+    uuv[2] *= 2.0
+
+    return [ v[0] + uv[0] + uuv[0],
+        v[1] + uv[1] + uuv[1],
+        v[2] + uv[2] + uuv[2] ]
+
+def rotationInverse(q):
+    scale = 1.0 / max(0.0001, np.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]))
+
+    return [ -q[0] * scale, -q[1] * scale, -q[2] * scale, q[3] * scale ]
+
 class EnvOpenDogRun(gym.Env):
     metadata = {
         'render.modes': ['human', 'rgb_array'],
@@ -46,7 +80,7 @@ class EnvOpenDogRun(gym.Env):
             motorLowValues[i * 3 + offset] = -0.5
             motorHighValues[i * 3 + offset] = 0.5
 
-        # Observations have additional information - 6 components for up vector and forward vector
+        # Observations have additional information - IMU data, scaled into [-1, 1] through tanh
         additionalLow = np.array(6 * [-1])
         additionalHigh = np.array(6 * [1])
 
@@ -57,10 +91,14 @@ class EnvOpenDogRun(gym.Env):
         self.action_space = spaces.Box(motorLowValues, motorHighValues)
 
         # Constants
-        self.tipThresh = 0.6 # Threshold for detecting falling over (based on cosine of angle to upright vector)
-        self.maxTime = 5.0 # 5 Seconds per episode
+        self.tipThresh = 0.7 # Threshold for detecting falling over
+        self.maxTime = 10.0 # 5 Seconds per episode
         self.timeStep = 0.02 # 50 FPS
-        self.motorForce = 50 # 50 Newtons
+        self.motorForce = 100
+        self.motorSmoothing = 0.1
+        self.motorMomentum = 0.8
+        self.lAccelSensitivity = 0.1 # Scaling factor for squashing lAccel into [-1, 1]
+        self.eAccelSensitivity = 0.5 # Scaling factor for squashing eAccel into [-1, 1]
 
         self._seed()
 
@@ -68,6 +106,13 @@ class EnvOpenDogRun(gym.Env):
         self._configure()
 
         self.currentSimTime = 0.0
+
+        self.smoothedMotorTargets = self.numJoints * [0]
+        self.motorDeltas = self.numJoints * [0]
+
+        # Track velocities
+        self.lVel = 3 * [ 0.0 ]
+        self.eVel = 4 * [ 0.0 ]
 
         self.done = False
 
@@ -78,34 +123,43 @@ class EnvOpenDogRun(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def _getBasis(self):
+    def _getUpVector(self):
         _, rot = p.getBasePositionAndOrientation(self.dog)
 
-        # Find upright vector
-        forward = p.getMatrixFromQuaternion(rot)[0:3]
-        up = p.getMatrixFromQuaternion(rot)[3:6]
-        right = p.getMatrixFromQuaternion(rot)[6:9]
-       
-        # Normalization factors
-        normFactorF = 1.0 / max(0.0001, np.sqrt(forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]))
-        normFactorU = 1.0 / max(0.0001, np.sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]))
-        normFactorR = 1.0 / max(0.0001, np.sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]))
-        
-        return [ [ forward[0] * normFactorF, forward[1] * normFactorF, forward[2] * normFactorF ],
-            [ up[0] * normFactorU, up[1] * normFactorU, up[2] * normFactorU ],
-            [ right[0] * normFactorR, right[1] * normFactorR, right[2] * normFactorR ] ]
+        return rotateVec(rot, [ 0.0, 1.0, 0.0 ])
+
+    def _IMU(self):
+        lVel, eVel = p.getBaseVelocity(self.dog)
+
+        # Convert to euler, a standard IMU format
+        eAccel = [ eVel[0] - self.eVel[0], eVel[1] - self.eVel[1], eVel[2] - self.eVel[2] ]
+
+        # Get lAccel in frame of rotation
+        _, rot = p.getBasePositionAndOrientation(self.dog)
+
+        rotInv = rotationInverse(rot)
+
+        lAccel = [ lVel[0] - self.lVel[0], lVel[1] - self.lVel[1], lVel[2] - self.lVel[2] ]
+
+        relativeLAccel = rotateVec(rotInv, lAccel)
+
+        return relativeLAccel + eAccel
 
     def _getObservation(self):
-        basis = self._getBasis()
-
         # Obtain observation
         observation = self.numJoints * [ 0.0 ]
 
         for i in range(self.numJoints):
             observation[i] = min(self.observation_space.high[i], max(self.observation_space.low[i], p.getJointState(self.dog, i)[0]))
 
-        # Additional information (2 components of basis)
-        observation += basis[0] + basis[1]
+        # Additional information (IMU)
+        imu = self._IMU()
+
+        # Rescale IMU data into [-1, 1]
+        scaledIMU = [ np.tanh(imu[0] * self.lAccelSensitivity), np.tanh(imu[1] * self.lAccelSensitivity), np.tanh(imu[2] * self.lAccelSensitivity),
+            np.tanh(imu[3] * self.eAccelSensitivity), np.tanh(imu[4] * self.eAccelSensitivity), np.tanh(imu[5] * self.eAccelSensitivity) ]
+
+        observation += scaledIMU
 
         return np.array(observation)
 
@@ -114,13 +168,11 @@ class EnvOpenDogRun(gym.Env):
 
         self.currentSimTime += self.timeStep
 
-        lVel, _ = p.getBaseVelocity(self.dog)
+        lVel, eVel = p.getBaseVelocity(self.dog)
 
         reward = lVel[0] * 0.1 # Move along positive X axis
 
-        basis = self._getBasis()
-
-        up = basis[1]
+        up = self._getUpVector()
 
         # If fell over
         if up[1] < self.tipThresh:
@@ -130,34 +182,48 @@ class EnvOpenDogRun(gym.Env):
 
         # Apply action
         for i in range(self.numJoints):
-            p.setJointMotorControl2(self.dog, i, p.POSITION_CONTROL, targetPosition=action[i], force=self.motorForce)
+            delta = self.motorSmoothing * (action[i] - self.smoothedMotorTargets[i]) + self.motorMomentum * self.motorDeltas[i]
+
+            self.smoothedMotorTargets[i] += delta
+
+            self.motorDeltas[i] = delta
+
+            p.setJointMotorControl2(self.dog, i, p.POSITION_CONTROL, targetPosition=self.smoothedMotorTargets[i], force=self.motorForce)
 
         if self.currentSimTime > self.maxTime:
             self.done = True
 
-        return self._getObservation(), reward, self.done, {}
+        # Must call before updating velocities
+        observation = self._getObservation()
+
+        self.lVel = lVel
+        self.eVel = eVel
+
+        return observation, reward, self.done, {}
 
     def _reset(self):
         self.done = False
         self.currentSimTime = 0.0
 
+        self.lVel = 3 * [ 0.0 ]
+        self.eVel = 4 * [ 0.0 ]
+
         p.resetSimulation()
 
         floor = p.loadURDF("myplane.urdf", [0, 0, 0])
 
-        p.changeDynamics(floor, 0, lateralFriction=1.0)
+        p.changeDynamics(floor, 0, lateralFriction=10.0)
+        p.setPhysicsEngineParameter(numSolverIterations=100)
 
         self.dog = p.loadURDF("opendog.urdf", [0, 0, 0.36], globalScaling=0.1, flags=p.URDF_USE_SELF_COLLISION)
 
         for i in range(self.numJoints):
-            p.changeDynamics(self.dog, i, lateralFriction=1.0)
+            p.changeDynamics(self.dog, i, lateralFriction=10.0)
 
         p.setGravity(0, 0, -9.81)
         p.setTimeStep(self.timeStep)
 
         p.setRealTimeSimulation(0)
-
-        totalReward = 0.0
 
         return self._getObservation()
 
