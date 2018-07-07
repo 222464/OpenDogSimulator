@@ -76,8 +76,8 @@ class EnvOpenDogRun(gym.Env):
             motorHighValues[i * 3 + offset] = 0.5
 
         # Observations have additional information - IMU data, scaled into [-1, 1] through tanh
-        additionalLow = np.array(6 * [-1])
-        additionalHigh = np.array(6 * [1])
+        additionalLow = np.array(6 * [ -1.0 ])
+        additionalHigh = np.array(6 * [ 1.0 ])
 
         observationLowValues = np.concatenate((motorLowValues, additionalLow), axis=0)
         observationHighValues = np.concatenate((motorHighValues, additionalHigh), axis=0)
@@ -205,13 +205,13 @@ class EnvOpenDogRun(gym.Env):
 
         p.resetSimulation()
 
-        floor = p.loadURDF("myplane.urdf", [0, 0, 0])
+        floor = p.loadURDF("myplane.urdf", [ 0.0, 0.0, 0.0 ])
 
         p.setPhysicsEngineParameter(numSolverIterations=100)
 
-        self.dog = p.loadURDF("opendog.urdf", [0, 0, 0.36], globalScaling=0.1, flags=p.URDF_USE_SELF_COLLISION)
+        self.dog = p.loadURDF("opendog.urdf", [ 0.0, 0.0, 0.36 ], globalScaling=0.1, flags=p.URDF_USE_SELF_COLLISION)
 
-        p.setGravity(0, 0, -9.81)
+        p.setGravity(0.0, 0.0, -9.81)
         p.setTimeStep(self.timeStep)
 
         p.setRealTimeSimulation(0)

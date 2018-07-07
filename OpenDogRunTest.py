@@ -92,8 +92,7 @@ for i in range(episodeCount):
 			
 			# Rescale
 			action[i] = actionSDR[i] / (actionColumnSize - 1) * (env.action_space.high[i] - env.action_space.low[i]) + env.action_space.low[i]
-			#action[i] = np.sin(-t * 0.1)
-		
+			
 		observation, reward, done, _ = env.step(np.array(action))
 
 		totalReward += reward
