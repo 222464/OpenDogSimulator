@@ -26,11 +26,6 @@ def cross(v0, v1):
         v0[2] * v1[0] - v0[0] * v1[2],
         v0[0] * v1[1] - v0[1] * v1[0] ]
 
-def rotationNormalize(q):
-    scale = 1.0 / max(0.0001, np.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]))
-
-    return [ v * scale for v in q ]
-
 def rotateVec(q, v):
     uv = cross(q[0:3], v)
     uuv = cross(q[0:3], uv)
@@ -95,10 +90,10 @@ class EnvOpenDogRun(gym.Env):
         self.maxTime = 10.0 # 5 Seconds per episode
         self.timeStep = 0.02 # 50 FPS
         self.motorForce = 100
-        self.motorSmoothing = 0.1
+        self.motorSmoothing = 0.3
         self.motorMomentum = 0.8
-        self.lAccelSensitivity = 0.1 # Scaling factor for squashing lAccel into [-1, 1]
-        self.eAccelSensitivity = 0.5 # Scaling factor for squashing eAccel into [-1, 1]
+        self.lAccelSensitivity = 1.0 # Scaling factor for squashing lAccel into [-1, 1]
+        self.eAccelSensitivity = 1.0 # Scaling factor for squashing eAccel into [-1, 1]
 
         self._seed()
 
@@ -126,7 +121,7 @@ class EnvOpenDogRun(gym.Env):
     def _getUpVector(self):
         _, rot = p.getBasePositionAndOrientation(self.dog)
 
-        return rotateVec(rot, [ 0.0, 1.0, 0.0 ])
+        return rotateVec(rot, [ 0.0, 0.0, 1.0 ])
 
     def _IMU(self):
         lVel, eVel = p.getBaseVelocity(self.dog)
@@ -175,7 +170,7 @@ class EnvOpenDogRun(gym.Env):
         up = self._getUpVector()
 
         # If fell over
-        if up[1] < self.tipThresh:
+        if up[2] < self.tipThresh:
             reward = -5.0 # Punish for tipping over
 
             self.done = True
@@ -212,13 +207,9 @@ class EnvOpenDogRun(gym.Env):
 
         floor = p.loadURDF("myplane.urdf", [0, 0, 0])
 
-        p.changeDynamics(floor, 0, lateralFriction=10.0)
         p.setPhysicsEngineParameter(numSolverIterations=100)
 
         self.dog = p.loadURDF("opendog.urdf", [0, 0, 0.36], globalScaling=0.1, flags=p.URDF_USE_SELF_COLLISION)
-
-        for i in range(self.numJoints):
-            p.changeDynamics(self.dog, i, lateralFriction=10.0)
 
         p.setGravity(0, 0, -9.81)
         p.setTimeStep(self.timeStep)
