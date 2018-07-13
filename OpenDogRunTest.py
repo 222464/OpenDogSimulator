@@ -4,7 +4,7 @@ from EnvOpenDogRun import EnvOpenDogRun
 import time
 import eogmaneo
 
-env = EnvOpenDogRun()
+env = EnvOpenDogRun(renders=True)
 env.seed(0)
 
 ########################### Create Agent ###########################
@@ -42,11 +42,12 @@ h.create([ (inputWidth, inputHeight), (actionWidth, actionHeight) ], [ inputColu
 
 # Set parameters
 for i in range(len(lds)):
-    l = h.getLayer(i)
-    l._alpha = 0.01
-    l._beta = 0.001
-    l._gamma = 0.98
-    l._maxRepaySamples = 32
+	l = h.getLayer(i)
+	l._alpha = 0.1
+	l._beta = 0.001
+	l._gamma = 0.99
+	l._maxReplaySamples = 128
+	l._replayIters = 32
 
 actionSDR = list(h.getPredictions(1))
 
@@ -87,7 +88,7 @@ for i in range(episodeCount):
 
 		for i in range(env.action_space.shape[0]):
 			# Exploration
-			if np.random.rand() < 0.1:
+			if np.random.rand() < 0.05:
 				actionSDR[i] = np.random.randint(0, actionColumnSize)
 			
 			# Rescale
@@ -101,7 +102,7 @@ for i in range(episodeCount):
 
 		timeEnd = time.clock()
 
-		if realTime:
+		if realTime or i % 10 == 0:
 			time.sleep(max(0.0, env.timeStep - (timeEnd - timeStart)))
 
 		t += 1

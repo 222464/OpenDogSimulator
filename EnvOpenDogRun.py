@@ -89,12 +89,13 @@ class EnvOpenDogRun(gym.Env):
         self.tipThresh = 0.7 # Threshold for detecting falling over
         self.maxTime = 10.0 # 5 Seconds per episode
         self.timeStep = 0.02 # 50 FPS
-        self.motorForce = 100
-        self.motorSmoothing = 0.3
+        self.motorForce = 500
+        self.motorSmoothing = 0.2
         self.motorMomentum = 0.8
         self.lAccelSensitivity = 1.0 # Scaling factor for squashing lAccel into [-1, 1]
         self.eAccelSensitivity = 1.0 # Scaling factor for squashing eAccel into [-1, 1]
-
+        self.energyCostScalar = 0.00001 # Scale the energy cost
+        
         self._seed()
 
         self.viewer = None
@@ -140,6 +141,19 @@ class EnvOpenDogRun(gym.Env):
 
         return relativeLAccel + eAccel
 
+    # Not true energy expenditure, but an approximation based on applied torque
+    def _getEnergy(self):
+        e = 0.0
+
+        for i in range(self.numJoints):
+            _, velocity, _, torque = p.getJointState(self.dog, i)
+
+            #power = torque * velocity
+
+            e += abs(torque)#abs(power * self.timeStep)
+
+        return e
+
     def _getObservation(self):
         # Obtain observation
         observation = self.numJoints * [ 0.0 ]
@@ -165,7 +179,7 @@ class EnvOpenDogRun(gym.Env):
 
         lVel, eVel = p.getBaseVelocity(self.dog)
 
-        reward = lVel[0] * 0.1 # Move along positive X axis
+        reward = lVel[0] * 0.1 - self._getEnergy() * self.energyCostScalar # Move along positive X axis and minimize energy consumption
 
         up = self._getUpVector()
 
@@ -207,9 +221,19 @@ class EnvOpenDogRun(gym.Env):
 
         floor = p.loadURDF("myplane.urdf", [ 0.0, 0.0, 0.0 ])
 
-        p.setPhysicsEngineParameter(numSolverIterations=100)
+        p.changeDynamics(floor, 0, lateralFriction=10.0)
+
+        p.setPhysicsEngineParameter(numSolverIterations=50)
 
         self.dog = p.loadURDF("opendog.urdf", [ 0.0, 0.0, 0.36 ], globalScaling=0.1, flags=p.URDF_USE_SELF_COLLISION)
+
+        for i in range(13):
+            m = 5.0
+
+            if i == 0:
+                m = 30
+
+            p.changeDynamics(self.dog, i, mass=m, lateralFriction=10.0)
 
         p.setGravity(0.0, 0.0, -9.81)
         p.setTimeStep(self.timeStep)
