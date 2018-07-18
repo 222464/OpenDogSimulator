@@ -45,7 +45,7 @@ for i in range(len(lds)):
 	l = h.getLayer(i)
 	l._alpha = 0.1
 	l._beta = 0.001
-	l._gamma = 0.99
+	l._gamma = 0.95
 	l._maxReplaySamples = 128
 	l._replayIters = 32
 
